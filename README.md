@@ -10,8 +10,8 @@ See http://fsprojects.github.io/FsLexYacc.
 Build the project
 -----------------
 
-* Mono: Run *build.sh*  [![Travis build status](https://travis-ci.org/fsprojects/FsLexYacc.svg)](https://travis-ci.org/fsprojects/FsLexYacc)
-* Windows: Run *build.cmd* [![AppVeyor build status](https://ci.appveyor.com/api/projects/status/061nqkynrysnyiv7)](https://ci.appveyor.com/project/fsgit/fslexyacc)
+* Mono: Run *build.sh*  [![Travis build status](https://travis-ci.org/gdziadkiewicz/FsLexYacc.svg)](https://travis-ci.org/gdziadkiewicz/FsLexYacc)
+* Windows: Run *build.cmd* [![AppVeyor build status](https://ci.appveyor.com/api/projects/status/f3ket8600x3xn14m)](https://ci.appveyor.com/project/gdziadkiewicz/fslexyacc)
 
 * [![NuGet Status](http://img.shields.io/nuget/v/FsLexYacc.Runtime.svg?style=flat)](https://www.nuget.org/packages/FsLexYacc.Runtime/) - FsLexYacc.Runtime
 * [![NuGet Status](http://img.shields.io/nuget/v/FsLexYacc.svg?style=flat)](https://www.nuget.org/packages/FsLexYacc/) - FsLexYacc
