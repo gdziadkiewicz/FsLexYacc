@@ -128,6 +128,7 @@ rule token = parse
  | '_' { UNDERSCORE }
  | '^' { HAT }
  | '-' { DASH }
+ | '#' { HASH }
  | "(*" { ignore(comment lexbuf.StartPos lexbuf); token lexbuf }
  | "//" [^'\n''\r']* { token lexbuf }
  | _ { unexpected_char lexbuf }     

@@ -94,8 +94,8 @@ let DecodeChar(x:Alphabet) =
      else
          if x >= 256u then failwithf "the Unicode character '%x' may not be used unless --unicode is specified" x;
          System.Convert.ToChar x
-         
-         
+
+
 
 let NumSpecificUnicodeChars() = specificUnicodeChars.Count
 let GetSpecificUnicodeChars() = 
@@ -108,14 +108,14 @@ let GetSingleCharAlphabet() =
     then Set.ofList [ for c in 0..numLowUnicodeChars-1 do yield (char c)
                       for c in GetSpecificUnicodeChars() do yield c ]
     else Set.ofList [ for x in 0..255 ->  (char x) ]
-         
+
 let GetAlphabet() = 
     if !unicode 
     then Set.ofList [ for c in GetSingleCharAlphabet() do yield EncodeChar c
                       for uc in 0 .. NumUnicodeCategories-1 do yield EncodeUnicodeCategoryIndex uc ]
     else Set.ofList [ for c in GetSingleCharAlphabet() do yield EncodeChar c ]
 
-         
+
 //let DecodeAlphabet (x:Alphabet) = System.Convert.ToChar(x)
 
 (*
@@ -134,6 +134,7 @@ and Clause = Regexp * Code
 and Regexp = 
   | Alt of Regexp list
   | Seq of Regexp list
+  | Diff of Regexp * Regexp
   | Inp of Input
   | Star of Regexp
   | Macro of Ident
@@ -142,6 +143,7 @@ and Input =
   | UnicodeCategory of string 
   | Any 
   | NotCharSet of Set<Alphabet>
+  | CharSet of Set<Alphabet>
 
 type NodeId = int   
 
@@ -175,7 +177,7 @@ type NfaNodeMap() =
         let trDict = new Dictionary<_,_>(List.length trs)
         for (a,b) in trs do
            AddToMultiMap trDict a b
-           
+
         let node : NfaNode = {Id=nodeId; Name=string nodeId; Transitions=trDict; Accepted=ac}
         map.[nodeId] <-node;
         node
@@ -184,18 +186,48 @@ let LexerStateToNfa (macros: Map<string,_>) (clauses: Clause list) =
 
     /// Table allocating node ids 
     let nfaNodeMap = new NfaNodeMap()
-    
+
     /// Compile a regular expression into the NFA
-    let rec CompileRegexp re dest = 
+    let rec CompileRegexp re dest =
+        let (|CharDiff|_|) regexp =
+            match regexp with
+            | Diff (Inp x, Inp y) ->
+                match (x, y) with
+                | (CharSet c1, CharSet c2) -> Set.difference c1 c2 |> CharSet |> Inp |> Some
+                | (CharSet c1, NotCharSet c2) -> Set.intersect c1 c2 |> CharSet |> Inp |> Some
+                | (NotCharSet c1, CharSet c2) -> Set.union c1 c2 |> NotCharSet |> Inp |> Some
+                | (NotCharSet c1, NotCharSet c2) -> Set.difference c2 c1 |> CharSet |> Inp |> Some
+                | _ -> None
+            | _ -> None
+        let convertCharsetToCharAlternative chars = Alt [for c in chars -> Inp(Alphabet c)]
+        let convertNotCharSetToCharAlternative (notchars:Set<Alphabet>) =
+                           Alt [ // Include any characters from those in the alphabet besides those that are not immediately excluded
+                               for c in GetSingleCharAlphabet() do 
+                                   let ec = EncodeChar c
+                                   if not (notchars.Contains(ec)) then 
+                                       yield Inp(Alphabet(ec))
+
+                               // Include all unicode categories 
+                               // That is, negations _only_ exclude precisely the given set of characters. You can't
+                               // exclude whole classes of characters as yet
+                               if !unicode then 
+                                   let ucs = notchars |> Set.map(DecodeChar >> System.Char.GetUnicodeCategory)  
+                                   for KeyValue(nm,uc) in unicodeCategories do
+                                       //if ucs.Contains(uc) then 
+                                       //    do printfn "warning: the unicode category '\\%s' ('%s') is automatically excluded by this character set negation. Consider adding this to the negation." nm  (uc.ToString())
+                                       //    yield! []
+                                       //else
+                                           yield Inp(Alphabet(EncodeUnicodeCategory nm)) 
+                         ]
         match re with 
         | Alt res -> 
             let trs = res |> List.map (fun re -> (Epsilon,CompileRegexp re dest)) 
             nfaNodeMap.NewNfaNode(trs,[])
         | Seq res -> 
-            List.foldBack (CompileRegexp) res dest 
+            List.foldBack (CompileRegexp) res dest
         | Inp (Alphabet c) -> 
             nfaNodeMap.NewNfaNode([(c, dest)],[])
-            
+
         | Star re -> 
             let nfaNode = nfaNodeMap.NewNfaNode([(Epsilon, dest)],[])
             let sre = CompileRegexp re nfaNode
@@ -221,30 +253,16 @@ let LexerStateToNfa (macros: Map<string,_>) (clauses: Clause list) =
         | Inp Any -> 
             let re = Alt([ for n in GetAlphabet() do yield Inp(Alphabet(n)) ])
             CompileRegexp re dest
-
-        | Inp (NotCharSet chars) -> 
-            let re = Alt [ // Include any characters from those in the alphabet besides those that are not immediately excluded
-                           for c in GetSingleCharAlphabet() do 
-                               let ec = EncodeChar c
-                               if not (chars.Contains(ec)) then 
-                                   yield Inp(Alphabet(ec))
-
-                           // Include all unicode categories 
-                           // That is, negations _only_ exclude precisely the given set of characters. You can't
-                           // exclude whole classes of characters as yet
-                           if !unicode then 
-                               let ucs = chars |> Set.map(DecodeChar >> System.Char.GetUnicodeCategory)  
-                               for KeyValue(nm,uc) in unicodeCategories do
-                                   //if ucs.Contains(uc) then 
-                                   //    do printfn "warning: the unicode category '\\%s' ('%s') is automatically excluded by this character set negation. Consider adding this to the negation." nm  (uc.ToString())
-                                   //    yield! []
-                                   //else
-                                       yield Inp(Alphabet(EncodeUnicodeCategory nm)) 
-                         ]
+        | Inp (CharSet chars) ->
+            let re = convertCharsetToCharAlternative chars
             CompileRegexp re dest
-
+        | Inp (NotCharSet chars) -> 
+            let re = convertNotCharSetToCharAlternative chars
+            CompileRegexp re dest
+        | CharDiff regexp -> CompileRegexp regexp dest
+        | Diff _ -> failwith "Hash can be used only with character sets."
     let actions = new System.Collections.Generic.List<_>()
-    
+
     /// Compile an acceptance of a regular expression into the NFA
     let sTrans macros nodeId (regexp,code) = 
         let actionId = actions.Count
@@ -307,7 +325,7 @@ type NodeSetSet = Set<NfaNodeIdSet>
 let newDfaNodeId = 
     let i = ref 0 
     fun () -> let res = !i in incr i; res
-   
+
 let NfaToDfa (nfaNodeMap:NfaNodeMap) nfaStartNode = 
     let numNfaNodes = nfaNodeMap.Count
     let rec EClosure1 (acc:NfaNodeIdSetBuilder) (n:NfaNode) = 
@@ -359,7 +377,7 @@ let NfaToDfa (nfaNodeMap:NfaNodeMap) nfaStartNode =
 
             dfaNodes := (!dfaNodes).Add(nfaSet,dfaNode); 
             dfaNode
-            
+
     let workList = ref [nfaSet0]
     let doneSet = ref Set.empty
 
@@ -406,4 +424,3 @@ let Compile spec =
             (ruleStartNode,actions) :: perRuleData, ruleNodes @ dfaNodes)
         spec.Rules
         ([],[])
-
