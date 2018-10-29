@@ -11,8 +11,11 @@ open Internal.Utilities.Text.Lexing
 let (|KeyValue|) (kvp:KeyValuePair<_,_>) = kvp.Key,kvp.Value
 
 type Ident = string
+#if INTERNALIZED_FSLEXYACC_RUNTIME
+type internal Code = string * Position
+#else
 type Code = string * Position
-
+#endif
 type Alphabet = uint32
 
 let Eof : Alphabet = 0xFFFFFFFEu
@@ -124,8 +127,11 @@ for i in 0 .. 65535 do
     if System.Char.GetUnicodeCategory c = System.Globalization.UnicodeCategory.PrivateUse then 
         printfn "i = %x" i
 *)
-
+#if INTERNALIZED_FSLEXYACC_RUNTIME
+type internal Spec = 
+#else
 type Spec = 
+#endif
     { TopCode: Code;
       Macros: (Ident * Regexp) list;
       Rules: (Ident * Ident list * Clause list) list;
@@ -301,9 +307,11 @@ type internal NfaNodeIdSet(nodes: NfaNodeIdSetBuilder) =
 
     member x.IsEmpty = (s.Length = 0)
     member x.Iterate f = s |> Array.iter f
-
+#if INTERNALIZED_FSLEXYACC_RUNTIME
+type internal NodeSetSet = Set<NfaNodeIdSet>
+#else
 type NodeSetSet = Set<NfaNodeIdSet>
-
+#endif
 let newDfaNodeId = 
     let i = ref 0 
     fun () -> let res = !i in incr i; res
@@ -396,8 +404,11 @@ let NfaToDfa (nfaNodeMap:NfaNodeMap) nfaStartNode =
         |> Seq.toList
         |> List.sortBy (fun s -> s.Id)
     ruleStartNode,ruleNodes
-
+#if INTERNALIZED_FSLEXYACC_RUNTIME
+let internal Compile spec = 
+#else
 let Compile spec = 
+#endif
     List.foldBack
         (fun (name,args,clauses) (perRuleData,dfaNodes) -> 
             let nfa, actions, nfaNodeMap = LexerStateToNfa (Map.ofList spec.Macros) clauses
