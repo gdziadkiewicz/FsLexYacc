@@ -4,11 +4,12 @@
 
 #I @"packages/FAKE/tools"
 #r @"packages/FAKE/tools/FakeLib.dll"
-open Fake 
-open Fake.Git
-open Fake.AssemblyInfoFile
-open Fake.ReleaseNotesHelper
-open System
+open Fake.Core
+open Fake.Core.TargetOperators
+open Fake.DotNet
+open Fake.IO
+open Fake.IO.Globbing.Operators
+open Fake.Tools.Git
 
 // --------------------------------------------------------------------------------------
 // START TODO: Provide project-specific details below
@@ -40,119 +41,127 @@ let testAssemblies = "tests/**/bin/Release/*Tests*.dll"
 let gitHome = "https://github.com/fsprojects"
 // The name of the project on GitHub
 let gitName = "FsLexYacc"
-
+let fsiTool = Fsi.FsiTool.External @"packages/FSharp.Compiler.Tools/tools/fsi.exe"
 // --------------------------------------------------------------------------------------
 // END TODO: The rest of the file includes standard build steps 
 // --------------------------------------------------------------------------------------
 
 // Read additional information from the release notes document
-Environment.CurrentDirectory <- __SOURCE_DIRECTORY__
-let release = parseReleaseNotes (IO.File.ReadAllLines "RELEASE_NOTES.md")
+System.Environment.CurrentDirectory <- __SOURCE_DIRECTORY__
+let release = ReleaseNotes.parse (System.IO.File.ReadAllLines "RELEASE_NOTES.md")
 
 // Generate assembly info files with the right version & up-to-date information
-Target "AssemblyInfo" (fun _ ->
+Target.create "AssemblyInfo" (fun _ ->
   for project in runtimeProjects do
       let fileName = "src/" + project + "/AssemblyInfo.fs"
-      CreateFSharpAssemblyInfo fileName
-          [ Attribute.Title project
-            Attribute.Product "FsLexYacc.Runtime"
-            Attribute.Description summary
-            Attribute.Version release.AssemblyVersion
-            Attribute.FileVersion release.AssemblyVersion ]
+      AssemblyInfoFile.createFSharp fileName
+          [ AssemblyInfo.Title project
+            AssemblyInfo.Product "FsLexYacc.Runtime"
+            AssemblyInfo.Description summary
+            AssemblyInfo.Version release.AssemblyVersion
+            AssemblyInfo.FileVersion release.AssemblyVersion ]
   for project in projects do 
       let fileName = "src/" + project + "/AssemblyInfo.fs"
-      CreateFSharpAssemblyInfo fileName
-          [ Attribute.Title project
-            Attribute.Product "FsLexYacc"
-            Attribute.Description summary
-            Attribute.Version release.AssemblyVersion
-            Attribute.FileVersion release.AssemblyVersion ] 
+      AssemblyInfoFile.createFSharp  fileName
+          [ AssemblyInfo.Title project
+            AssemblyInfo.Product "FsLexYacc"
+            AssemblyInfo.Description summary
+            AssemblyInfo.Version release.AssemblyVersion
+            AssemblyInfo.FileVersion release.AssemblyVersion ] 
 )
 
 // --------------------------------------------------------------------------------------
 // Clean build results & restore NuGet packages
 
-Target "Clean" (fun _ ->
-    CleanDirs ["bin"; "temp"]
+Target.create "Clean" (fun _ ->
+    Shell.cleanDirs ["bin"; "temp"]
 )
 
-Target "CleanDocs" (fun _ ->
-    CleanDirs ["docs/output"]
+Target.create "CleanDocs" (fun _ ->
+    Shell.cleanDirs ["docs/output"]
 )
 
 // --------------------------------------------------------------------------------------
 // Build library & test project
 
-Target "Build" (fun _ ->
+Target.create "Build" (fun _ ->
     let projects =
         (!! "src/**/*.fsproj").And("tests/**/*.fsproj")
 
     projects
-    |> MSBuildRelease "" "Rebuild"
+    |> MSBuild.runRelease id "" "Rebuild"
     |> ignore
 )
 
 // --------------------------------------------------------------------------------------
 // Run the unit tests using test runner
 
-Target "RunOldFsYaccTests" (fun _ ->
-    let result = executeFSIWithArgs @"tests\fsyacc" "OldFsYaccTests.fsx" ["--define:RELEASE"] []
-    if not result then
+Target.create "RunOldFsYaccTests" (fun _ ->
+    let (exitCode, messages) =
+        Fsi.exec (fun p ->
+         {p with
+            Define = "RELEASE"
+            ToolPath = fsiTool
+         })
+         "tests/fsyacc/OldFsYaccTests.fsx"
+         []
+    if exitCode <> 0 then
+        List.iter (printfn "%s") messages
         failwith "Old FsLexYacc tests were failed"
 )
 
 // --------------------------------------------------------------------------------------
 // Build a NuGet package
 
-Target "NuGet" (fun _ ->
-    Paket.Pack (fun p -> 
+Target.create "NuGet" (fun _ ->
+    Paket.pack (fun p -> 
         { p with 
             TemplateFile = "nuget/FsLexYacc.Runtime.template"
             Version = release.NugetVersion
             OutputPath = "bin"
-            ReleaseNotes = toLines release.Notes })
-    Paket.Pack (fun p -> 
+            ReleaseNotes = release.Notes |> String.concat "\n"  })
+    Paket.pack (fun p -> 
         { p with 
             TemplateFile = "nuget/FsLexYacc.template"
             Version = release.NugetVersion
             OutputPath = "bin"
-            ReleaseNotes = toLines release.Notes })
+            ReleaseNotes = release.Notes |> String.concat "\n" })
 
 )
 
 // --------------------------------------------------------------------------------------
 // Generate the documentation
 
-Target "GenerateDocs" (fun _ ->
-    executeFSIWithArgs "docs/tools" "generate.fsx" ["--define:RELEASE"] [] |> ignore
+Target.create "GenerateDocs" (fun _ ->
+    Fsi.exec (fun p -> {p with WorkingDirectory="docs/tools"; Define="RELEASE"; ToolPath= Fsi.FsiTool.Internal}) "docs/tools/generate.fsx" [] |> ignore
 )
 
 // --------------------------------------------------------------------------------------
 // Release Scripts
 
-Target "ReleaseDocs" (fun _ ->
+Target.create "ReleaseDocs" (fun _ ->
     let tempDocsDir = "temp/gh-pages"
-    CleanDir tempDocsDir
+    Shell.cleanDir tempDocsDir
     Repository.cloneSingleBranch "" (gitHome + "/" + gitName + ".git") "gh-pages" tempDocsDir
 
-    fullclean tempDocsDir
-    CopyRecursive "docs/output" tempDocsDir true |> tracefn "%A"
-    StageAll tempDocsDir
-    Commit tempDocsDir (sprintf "Update generated documentation for version %s" release.NugetVersion)
+    Repository.fullclean tempDocsDir
+    Shell.copyRecursive "docs/output" tempDocsDir true |> Trace.tracefn "%A"
+    Staging.stageAll tempDocsDir
+    Commit.exec tempDocsDir (sprintf "Update generated documentation for version %s" release.NugetVersion)
     Branches.push tempDocsDir
 )
 
-Target "Release" DoNothing
+Target.create "Release" ignore
 
 // --------------------------------------------------------------------------------------
 // Run all targets by default. Invoke 'build <Target>' to override
 
-Target "All" DoNothing
+Target.create "All" ignore
 
 "Clean"
   ==> "AssemblyInfo"
   ==> "Build"
-  =?> ("RunOldFsYaccTests", isWindows)
+  =?> ("RunOldFsYaccTests", Environment.isWindows)
   ==> "All"
 
 "All" 
@@ -170,4 +179,4 @@ Target "All" DoNothing
   ==> "Release"
 
 
-RunTargetOrDefault "All"
+Target.runOrDefault "All"

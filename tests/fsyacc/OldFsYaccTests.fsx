@@ -5,6 +5,8 @@ open System
 open Fake.FscHelper
 open System.IO
 
+System.Environment.CurrentDirectory <- __SOURCE_DIRECTORY__
+
 [@"..\..\bin\FsLexYacc.Runtime.dll"
  @"..\..\bin\FSharp.Core.dll"]
 |> FileHelper.CopyTo @".\"
